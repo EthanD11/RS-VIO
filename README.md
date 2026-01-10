@@ -101,9 +101,9 @@ It's released under the GNU General Public License v3 (GPLv3). See LICENSE file 
 ### Citation
 
 ```
-@misc{rust_stereo_vio_2026,
+@misc{rs_vio_2026,
   author = {Charles Hamesse},
-  title = {Rust Stereo Visual-Inertial Odometry},
+  title = {Rust Stereo Visual-Inertial Odometry (RS-VIO)},
   year = {2026},
   howpublished = {\url{https://github.com/charleshamesse/rs-vio}},
   note = {v0.1}

@@ -15,4 +15,4 @@ Implement a minimal feature tracker in Rust using feature detection (Harris/Fast
 3. [nalgebra](https://docs.rs/nalgebra/latest/nalgebra/) for small matrix/vector and Lie Groups $SE(2)$ computations
 
 ## Plan
-1. [ ]  Feature detection
+1. [ ]  Harris single-scale feature detection

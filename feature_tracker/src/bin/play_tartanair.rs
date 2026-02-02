@@ -1,8 +1,8 @@
 use std::error::Error;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Path};
 
-use feature_tracker::players::tartanair_player::{self, *};
+use feature_tracker::players::tartanair_player::*;
 use feature_tracker::feature_tracker::*;
 
 

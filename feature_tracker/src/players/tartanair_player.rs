@@ -4,10 +4,12 @@ use std::thread;
 use std::time;
 
 use anyhow::Result;
-use image::{self, ImageBuffer, Luma};
+use image::{self};
 use rerun as rr;
 
 use crate::feature_tracker::*;
+use crate::ext::Frame;
+use crate::viewer::FeatureTrackerViewer;
 
 
 #[derive(Clone)]
@@ -21,9 +23,10 @@ impl TartanAirPlayer {
     }
 
     pub fn run(&self, config: FeatureTrackingConfig) -> Result<()> {
-        let mut tracker = FeatureTracker::new(config);
-        
         let rec = rr::RecordingStreamBuilder::new("Patch Tracker").spawn()?;
+
+        let mut tracker = FeatureTracker::new(config, Some(&rec as &dyn FeatureTrackerViewer));
+        
         let left_entity_path = "image_left";
 
         let mut left_images: Vec<_> = fs::read_dir(&(self.dataset_path.join("image_left")))?
@@ -31,14 +34,21 @@ impl TartanAirPlayer {
             .collect();
         left_images.sort_by_key(|dir_entry| dir_entry.path());
         
-        for file in left_images.iter().skip(300).take(100) {
-            let left_image = image::open(file.path())?;
-
-            tracker.process_frame(&left_image.to_luma8());
+        for file in left_images.iter().skip(300).take(1) {
+            let frame_id = file.path()
+                .file_stem().unwrap()
+                .to_str().unwrap()
+                .split("_").nth(0).unwrap()
+                .parse().unwrap();
+            rec.set_time_sequence("frame_id", frame_id);
+            let frame_image = image::open(file.path())?;
+            let frame = Frame::new(frame_id);
+            tracker.process_frame(&frame_image.to_luma8(), &frame);
             rec.log(
                 left_entity_path,
-                &rr::Image::from_dynamic_image(left_image)?
+                &rr::Image::from_dynamic_image(frame_image)?
             )?;
+            thread::sleep(time::Duration::from_millis(30));
         }
         
 

@@ -1,15 +1,14 @@
-use std::ops::Deref;
-
 use imageproc::gradients;
 use serde::{Deserialize, Serialize};
-use image::{self, DynamicImage, GrayImage, ImageBuffer, Luma, Pixel, imageops::*};
+use image::{self, GrayImage, ImageBuffer, Luma, Pixel};
 
 use crate::ext::Frame;
+use crate::image_operations::*;
 use crate::viewer::FeatureTrackerViewer;
+use crate::types::*;
 
 
-type ImageFloat = f32;
-type Pyramid = Vec<ImageBuffer<Luma<ImageFloat>, Vec<ImageFloat>>>;
+
 
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -17,7 +16,7 @@ pub struct FeatureTrackingConfig {
     pub nlevels: usize, // Number of pyramid levels
     pub ratio: f64, // Ratio of size between each levels
     pub preprocessing_blur: bool,
-    pub preprocessing_blur_sigma: ImageFloat
+    pub preprocessing_blur_sigma: Float
 }
 
 
@@ -48,18 +47,18 @@ impl<'a> FeatureTracker<'a> {
         FeatureTracker { config, previous_pyramid: None, viewer }
     }
 
-    pub fn process_frame(&mut self, input_image: &GrayImage, frame: &mut Frame) 
+    pub fn process_frame(&mut self, in_image: &GrayImage, frame: &mut Frame) 
     {   
 
         if let Some(v) = self.viewer {
             v.set_frame(frame.frame_id);
-            v.log_image_raw(&input_image.clone().into(), "image/raw");
+            v.log_image_raw(&in_image.clone().into(), "image/raw");
         }
 
         
         
         let pyramid = build_image_pyramid(
-            input_image, 
+            in_image, 
             self.config.nlevels, 
             self.config.ratio,
             self.config.preprocessing_blur,
@@ -74,7 +73,7 @@ impl<'a> FeatureTracker<'a> {
             println!("there was a previous pyramid");
         };
 
-        add_points(&pyramid, frame);
+        feature_detection::add_points(&pyramid, frame);
 
 
         self.previous_pyramid = Some(pyramid);
@@ -87,43 +86,25 @@ impl<'a> FeatureTracker<'a> {
 
 
 
-fn build_image_pyramid(input_image: &GrayImage, nlevels: usize, ratio: f64, bluring: bool, blur_sigma: ImageFloat) -> Pyramid {
-    let float_image: ImageBuffer<Luma<ImageFloat>, Vec<_>> = ImageBuffer::from_vec(
-        input_image.width(), 
-        input_image.height(),
-        input_image.pixels()
-            .map(|p| (p.channels()[0] as ImageFloat) / 255.0)
-            .collect::<Vec<_>>()
-    ).unwrap();
+// Image pyramid builder
 
-    let float_image = if bluring {
-        blur(&float_image, blur_sigma.into())
-    } else {
-        float_image
-    };
 
-    let (w0, h0) = float_image.dimensions();
 
-    let mut pyramid = Vec::new();
-    pyramid.push(float_image);
-    for l in 1..nlevels {
 
-        let level = i32::try_from(l).expect("Overflow caused by number of pyramid levels superior to i32::MAX. Consider decreasing number of pyramid levels");
-        let nwidth = (f64::try_from(w0).unwrap() / ratio.powi(level)).round() as u32;
-        let nheight = (f64::try_from(h0).unwrap() / ratio.powi(level)).round() as u32;
-        
-        let previous_image = pyramid.last().unwrap();
-        pyramid.push(resize(previous_image, nwidth, nheight, Triangle));
-    } 
-    pyramid
+// Feature detection methods
+pub mod feature_detection {
+    use super::*;
+
+    pub fn add_points(pyramid: &Pyramid, frame: &mut Frame) {
+        let image_fine = pyramid.first().unwrap();
+        // gradients::gradients(image_fine, horizontal_kernel, vertical_kernel, f);
+        todo!()
+    }
+
+    // fn criterion(in_image: &ImageBuffer<Luma<Float>, Vec<Float>>, patch: )
 }
 
 
-fn add_points(pyramid: &Pyramid, frame: &mut Frame) {
-    let image_fine = pyramid.first().unwrap();
-    gradients::gradients(image_fine, horizontal_kernel, vertical_kernel, f);
-    todo!()
-}
 
 
 

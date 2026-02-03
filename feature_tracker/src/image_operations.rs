@@ -63,8 +63,11 @@ mod pyramid_module {
 
 pub use interpolation_module::*; // Re-export to higher module
 mod interpolation_module {
+    use std::ops::Not;
+
     use super::*;
-    use image::{self, GrayImage, ImageBuffer, Luma, Pixel, imageops::*};
+    use image::{self, GenericImageView, GrayImage, ImageBuffer, Luma, Pixel, imageops::*};
+
     pub trait InterpolationPoint {
         fn as_array(&self) -> &[Float; 2];
     }
@@ -78,15 +81,72 @@ mod interpolation_module {
             self.as_ref()
         }
     }
+
+    pub trait Interpolant {
+        fn dimensions(&self) -> (u32, u32);
+        fn intensity_at(&self, x: u32, y: u32) -> Float;
+    }
+    impl Interpolant for FloatGreyImage {
+        fn dimensions(&self) -> (u32, u32) {
+            self.dimensions()
+        }
+        fn intensity_at(&self, x: u32, y: u32) -> Float {
+            self.get_pixel(x, y).channels()[0]
+        }
+    }
     
     
-    // Bicubic interpolation
-    pub fn interpolate_bicubic<PointT: InterpolationPoint>(point: &PointT, interpolant: FloatGreyImage)
+    /// Performs bicubic interpolation of the interpolant.
+    /// Returns `None` if the pixel is out-of-bound
+    pub fn interpolate_bicubic<PointT: InterpolationPoint, InterpolantT: Interpolant>(
+        point: &PointT, interpolant: &InterpolantT
+    ) -> Option<Float>
     {   
-        let [x, y] = point.as_array();
+        let &[x, y] = point.as_array();
         let (w,h) = interpolant.dimensions();
-    
-    
+
+        let xf = x.floor() as u32;
+        let yf = y.floor() as u32;
+
+        if  (1..=w.saturating_sub(3)).contains(&xf).not() || 
+            (1..=h.saturating_sub(3)).contains(&yf).not() 
+        {
+            return None // Out-of-bound
+        }
+        
+        
+        let x_low = xf - 1;
+        let y_low = yf - 1;
+        let tx = x - (xf as Float);
+        let ty = y - (yf as Float);
+        let mut fy = [0.0; 4];
+        for dy in 0..4 {
+            let v = y_low+dy;
+            let fx = [
+                interpolant.intensity_at(x_low, v),
+                interpolant.intensity_at(x_low+1, v),
+                interpolant.intensity_at(x_low+2, v),
+                interpolant.intensity_at(x_low+3, v),
+            ];
+            fy[dy as usize] = bicubic_1d(&fx, tx);
+        }
+
+        let result = bicubic_1d(&fy, ty);
+
+        Some(result)
+    }
+
+    #[inline]
+    fn bicubic_1d(
+        f: &[Float; 4], t: Float
+    ) -> Float
+    {
+        let a0 = f[1];
+        let a1_double = f[2] - f[0];
+        let a2_double = 2.0*f[0] - 5.0*f[1] + 4.0*f[2] - f[3];
+        let a3_double = 3.0*(f[1]-f[2]) + f[3] - f[0];
+        let result = a0 + 0.5 * (t * ( a1_double + t * ( a2_double + t * a3_double )));
+        result
     }
     
     
@@ -94,6 +154,7 @@ mod interpolation_module {
     mod test {
     
         use super::*;
+        use rand;
     
         #[test]
         fn test_interpolate_bicubic() {
@@ -105,5 +166,11 @@ mod interpolation_module {
             let interpolant = FloatGreyImage::new(100, 100);
             interpolate_bicubic(&p, interpolant);
         }
+
+        // #[test]
+        // fn test_bicubic_1d() {
+        //     let f = std::array::from_fn(|_| rand::random());
+        //     let out = bicubic_1d(f, 0.5);
+        // }
     }
 }

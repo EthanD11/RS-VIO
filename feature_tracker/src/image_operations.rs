@@ -4,7 +4,7 @@ use crate::types::*;
 pub use pyramid_module::*; // Re-export to higher module
 mod pyramid_module {
     use super::*;
-    use image::{self, GrayImage, ImageBuffer, Luma, Pixel, imageops::*};
+    use image::{self, GrayImage, ImageBuffer, Luma, imageops::*};
     pub trait ImagePyramidInput {
         fn width(&self) -> u32;
         fn height(&self) -> u32;
@@ -20,7 +20,19 @@ mod pyramid_module {
             self.height()
         }
         fn pixel_intensities(&self) -> Vec<Float> {
-            self.pixels().map(|p| (p.channels()[0] as Float) / 255.0).collect()
+            // self.pixels().map(|p| (p.channels()[0] as Float)).collect()
+            self.as_raw().into_iter().map(|&p| p as Float).collect()
+        }
+    }
+    impl ImagePyramidInput for FloatGrayImage {
+        fn width(&self) -> u32 {
+            self.width()
+        }
+        fn height(&self) -> u32 {
+            self.height()
+        }
+        fn pixel_intensities(&self) -> Vec<Float> {
+            self.as_raw().clone()
         }
     }
     
@@ -86,12 +98,13 @@ mod interpolation_module {
         fn dimensions(&self) -> (u32, u32);
         fn intensity_at(&self, x: u32, y: u32) -> Float;
     }
-    impl Interpolant for FloatGreyImage {
+    impl Interpolant for FloatGrayImage {
         fn dimensions(&self) -> (u32, u32) {
             self.dimensions()
         }
         fn intensity_at(&self, x: u32, y: u32) -> Float {
-            self.get_pixel(x, y).channels()[0]
+            // self.get_pixel(x, y).channels()[0]
+            self.as_raw()[(y*self.width() + x) as usize]
         }
     }
     
@@ -159,12 +172,12 @@ mod interpolation_module {
         #[test]
         fn test_interpolate_bicubic() {
             let p = [1.0f32, 2.0f32];
-            let interpolant = FloatGreyImage::new(100, 100);
-            interpolate_bicubic(&p, interpolant);
+            let interpolant = FloatGrayImage::new(100, 100);
+            interpolate_bicubic(&p, &interpolant);
     
             let p = Vec2::new(1.0, 2.0);
-            let interpolant = FloatGreyImage::new(100, 100);
-            interpolate_bicubic(&p, interpolant);
+            let interpolant = FloatGrayImage::new(100, 100);
+            interpolate_bicubic(&p, &interpolant);
         }
 
         // #[test]

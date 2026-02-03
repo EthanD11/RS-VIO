@@ -7,12 +7,13 @@ pub mod image_operations;
 
 pub mod types {
 
-    use image::{ImageBuffer, Luma};
+    use image::{ImageBuffer, Luma, Pixel};
     use nalgebra as na;
     
     pub type Float = f32;
-    pub type FloatGreyImage = ImageBuffer<Luma<Float>, Vec<Float>>; 
-    pub type Pyramid = Vec<FloatGreyImage>;
+    pub type Image<P> = ImageBuffer<P, Vec<<P as Pixel>::Subpixel>>;
+    pub type FloatGrayImage = Image<Luma<Float>>; 
+    pub type Pyramid = Vec<FloatGrayImage>;
 
     pub type Vec2 = na::Vector2::<Float>;
 

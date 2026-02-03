@@ -43,7 +43,7 @@ impl TartanAirPlayer {
             rec.set_time_sequence("frame_id", frame_id);
             let frame_image = image::open(file.path())?;
             let mut frame = Frame::new(frame_id);
-            tracker.process_frame(&frame_image.to_luma8(), &mut frame);
+            tracker.process_frame(&frame_image.to_luma32f(), &mut frame);
             rec.log(
                 left_entity_path,
                 &rr::Image::from_dynamic_image(frame_image)?

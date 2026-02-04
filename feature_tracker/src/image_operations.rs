@@ -69,6 +69,23 @@ mod pyramid_module {
         pyramid
     
     }
+
+    #[cfg(test)]
+    mod test {
+        use super::*;
+
+        #[test]
+        fn test_image_pyramid() {
+            let (w, h) = (120, 60);
+            let gray_image = GrayImage::from_vec(w, h, 
+                Vec::from_iter(std::iter::repeat(5).take((w*h) as usize))).unwrap();
+
+            let pyramid = build_image_pyramid(&gray_image, 3, 2.0, false, 0.0);
+            assert!(pyramid[0].dimensions() == (120, 60));
+            assert!(pyramid[1].dimensions() == (60, 30));
+            assert!(pyramid[2].dimensions() == (30, 15));
+        }
+    }
 }
 
 

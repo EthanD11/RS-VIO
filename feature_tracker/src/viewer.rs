@@ -10,7 +10,7 @@ pub trait FeatureTrackerViewer {
     fn log_image_raw(&self, image: &DynamicImage, entity_path: &str);
     
     /// Log image with features drawn on it
-    fn log_features(&self, features: &[[f32; 2]], entity_path: &str);
+    fn log_features(&self, features: &[[f32; 2]], entity_path: &str, labels: Option<&[String]>);
 
     fn log_image_pyramid(&self, pyramid: &[&DynamicImage], entity_path: &str);
 
@@ -50,17 +50,18 @@ impl FeatureTrackerViewer for rr::RecordingStream {
         }
     }
 
-    fn log_features(&self, features: &[[f32; 2]], entity_path: &str) {
-        self.log(
-            entity_path, 
-            &rr::Points2D::new(
+    fn log_features(&self, features: &[[f32; 2]], entity_path: &str, ids: Option<&[String]>) {
+        let mut points = rr::Points2D::new(
                     features.iter()
-                        // .map(|[x,y]| [x+0.5, y+0.5])
+                        .map(|[x,y]| [x+0.5, y+0.5])
                 )
                 .with_draw_order(100.0)
                 .with_colors([rr::Color::from_rgb(255, 0, 0)])
-                .with_radii([1.5])
-        ).unwrap();
+                .with_radii([rr::Radius::new_ui_points(2.5)]);
+        if let Some(ids) = ids {
+            points = points.with_labels(ids.into_iter().cloned());
+        }
+        self.log(entity_path, &points).unwrap();
     }
 
     fn log_map(&self, img: &[f32], width: u32, height: u32, entity_path: &str, cmap: Option<rr::components::Colormap>, draw_order: Option<f32>) {

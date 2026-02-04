@@ -26,29 +26,32 @@ impl TartanAirPlayer {
         let rec = rr::RecordingStreamBuilder::new("Patch Tracker").spawn()?;
 
         let mut tracker = FeatureTracker::new(config, Some(&rec as &dyn FeatureTrackerViewer));
+        // let mut tracker = FeatureTracker::new(config, None);
         
-        let left_entity_path = "image_left";
 
         let mut left_images: Vec<_> = fs::read_dir(&(self.dataset_path.join("image_left")))?
             .map(|r| r.unwrap())
             .collect();
         left_images.sort_by_key(|dir_entry| dir_entry.path());
         
-        for file in left_images.iter().skip(300).take(50) {
+        for file in left_images.iter().skip(300).take(100) {
+
             let frame_id = file.path()
                 .file_stem().unwrap()
                 .to_str().unwrap()
                 .split("_").nth(0).unwrap()
                 .parse().unwrap();
+
             rec.set_time_sequence("frame_id", frame_id);
+
             let frame_image = image::open(file.path())?;
             let mut frame = Frame::new(frame_id);
+
             tracker.process_frame(&frame_image.to_luma32f(), &mut frame);
-            rec.log(
-                left_entity_path,
-                &rr::Image::from_dynamic_image(frame_image)?
-            )?;
-            thread::sleep(time::Duration::from_millis(50));
+
+
+
+            rec.log_image_raw(&frame_image, "image/colored");
         }
         
 

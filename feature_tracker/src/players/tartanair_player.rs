@@ -34,7 +34,7 @@ impl TartanAirPlayer {
             .collect();
         left_images.sort_by_key(|dir_entry| dir_entry.path());
         
-        for file in left_images.iter().skip(300).take(1) {
+        for file in left_images.iter().skip(300).take(50) {
             let frame_id = file.path()
                 .file_stem().unwrap()
                 .to_str().unwrap()
@@ -48,7 +48,7 @@ impl TartanAirPlayer {
                 left_entity_path,
                 &rr::Image::from_dynamic_image(frame_image)?
             )?;
-            thread::sleep(time::Duration::from_millis(30));
+            thread::sleep(time::Duration::from_millis(50));
         }
         
 

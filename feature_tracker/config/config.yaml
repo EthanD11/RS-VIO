@@ -1,7 +1,7 @@
 nlevels: 5
 ratio: 2.0
-preprocessing_blur: False
+preprocessing_blur: True
 preprocessing_blur_sigma: 1.5
-detection_min_dist: 4
-detection_threshold: 4.0
-detection_blur: 3.0
+detection_min_dist: 10
+detection_threshold: 1.0
+detection_blur: 4.0

@@ -14,7 +14,7 @@ pub trait FeatureTrackerViewer {
 
     fn log_image_pyramid(&self, pyramid: &[&DynamicImage], entity_path: &str);
 
-    fn log_map(&self, img: &[f32], width: u32, height: u32, cmap: Option<rr::components::Colormap>, entity_path: &str);
+    fn log_map(&self, img: &[f32], width: u32, height: u32, entity_path: &str, cmap: Option<rr::components::Colormap>, draw_order: Option<f32>);
     
     /// Log image with features colored by feature ID
     /// Features should be provided as (feature_id, [x, y]) tuples
@@ -53,14 +53,17 @@ impl FeatureTrackerViewer for rr::RecordingStream {
     fn log_features(&self, features: &[[f32; 2]], entity_path: &str) {
         self.log(
             entity_path, 
-            &rr::Points2D::new(features.iter().map(|[x,y]| [x+0.5, y+0.5]))
+            &rr::Points2D::new(
+                    features.iter()
+                        // .map(|[x,y]| [x+0.5, y+0.5])
+                )
                 .with_draw_order(100.0)
                 .with_colors([rr::Color::from_rgb(255, 0, 0)])
                 .with_radii([1.5])
         ).unwrap();
     }
 
-    fn log_map(&self, img: &[f32], width: u32, height: u32, cmap: Option<rr::components::Colormap>, entity_path: &str) {
+    fn log_map(&self, img: &[f32], width: u32, height: u32, entity_path: &str, cmap: Option<rr::components::Colormap>, draw_order: Option<f32>) {
         let h = height as usize;
         let w = width as usize;
         let img = rr::external::ndarray::Array2::from_shape_fn((h, w), |(i, j)| img[i*w+j]);
@@ -68,6 +71,7 @@ impl FeatureTrackerViewer for rr::RecordingStream {
             entity_path,
             &rr::DepthImage::try_from(img).unwrap()
                 .with_colormap(cmap.unwrap_or(rr::components::Colormap::Viridis))
+                .with_draw_order(draw_order.unwrap_or(-20.0))
         ).unwrap();
     }
 

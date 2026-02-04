@@ -1,6 +1,9 @@
+use log;
+
 use imageproc::definitions::Position;
 use serde::{Deserialize, Serialize};
 use image::{self, GrayImage, ImageBuffer, Luma, Pixel};
+
 
 use crate::ext::Frame;
 use crate::image_operations::*;
@@ -190,11 +193,16 @@ pub mod feature_detection {
         let image_fine = pyramid.first().unwrap();
         
         let score_map = shi_tomasi_score(&image_fine, detection_blur, viewer);
-        let corners = suppress_non_maximum(&score_map, min_dist_between_points, threshold);
+        let corners = suppress_non_maximum(&score_map, 1, threshold, viewer);
+        let corners = suppress::local_maxima(&corners, min_dist_between_points);
         
+        let (w, h) = image_fine.dimensions();
+        let xrange = min_dist_between_points..(w-min_dist_between_points);
+        let yrange = min_dist_between_points..(h-min_dist_between_points);
         corners
             .into_iter()
             .filter(|c| c.from_past_feature.not())
+            .filter(|c| xrange.contains(&c.x) && yrange.contains(&c.y))
             .collect()
     }
 
@@ -211,9 +219,11 @@ pub mod feature_detection {
         let mut dimage_dxx = filter::horizontal_filter(&in_image, &kernel);
         let mut dimage_dyy = filter::vertical_filter(&in_image, &kernel);
 
-        if let Some(v) = viewer {
-            v.log_map(dimage_dxx.as_raw(), w, h, None, "image/shi_tomasi/grad/x");
-            v.log_map(dimage_dyy.as_raw(), w, h, None, "image/shi_tomasi/grad/y");
+        if log::max_level() >= log::LevelFilter::Debug {
+            if let Some(v) = viewer {
+                v.log_map(dimage_dxx.as_raw(), w, h, "image/shi_tomasi/grad/x", None, None);
+                v.log_map(dimage_dyy.as_raw(), w, h, "image/shi_tomasi/grad/y", None, None);
+            }
         }
 
         let mut dimage_dxy = FloatGrayImage::new(w, h);
@@ -228,20 +238,24 @@ pub mod feature_detection {
             }
         }
 
-        if let Some(v) = viewer {
-            v.log_map(dimage_dxx.as_raw(), w, h, None, "image/shi_tomasi/structure/dxx");
-            v.log_map(dimage_dyy.as_raw(), w, h, None, "image/shi_tomasi/structure/dyy");
-            v.log_map(dimage_dxy.as_raw(), w, h, None, "image/shi_tomasi/structure/dxy");
+        if log::max_level() >= log::LevelFilter::Debug {
+            if let Some(v) = viewer {
+                v.log_map(dimage_dxx.as_raw(), w, h, "image/shi_tomasi/structure/dxx", None, None);
+                v.log_map(dimage_dyy.as_raw(), w, h, "image/shi_tomasi/structure/dyy", None, None);
+                v.log_map(dimage_dxy.as_raw(), w, h, "image/shi_tomasi/structure/dxy", None, None);
+            }
         }
 
         let dimage_dxx = fast_blur(&dimage_dxx, detection_blur);
         let dimage_dyy = fast_blur(&dimage_dyy, detection_blur);
         let dimage_dxy = fast_blur(&dimage_dxy, detection_blur);
 
-        if let Some(v) = viewer {
-            v.log_map(dimage_dxx.as_raw(), w, h, None, "image/shi_tomasi/structure_smooth/dxx");
-            v.log_map(dimage_dyy.as_raw(), w, h, None, "image/shi_tomasi/structure_smooth/dyy");
-            v.log_map(dimage_dxy.as_raw(), w, h, None, "image/shi_tomasi/structure_smooth/dxy");
+        if log::max_level() >= log::LevelFilter::Debug {
+            if let Some(v) = viewer {
+                v.log_map(dimage_dxx.as_raw(), w, h, "image/shi_tomasi/structure_smooth/dxx", None, None);
+                v.log_map(dimage_dyy.as_raw(), w, h, "image/shi_tomasi/structure_smooth/dyy", None, None);
+                v.log_map(dimage_dxy.as_raw(), w, h, "image/shi_tomasi/structure_smooth/dxy", None, None);
+            }
         }
 
         let mut score_map = FloatGrayImage::new(w, h);
@@ -260,18 +274,17 @@ pub mod feature_detection {
                 let delta = Float::max(trace*trace - 4.0*det, 0.0);
 
                 let score = 500.0*((trace - delta.sqrt())).abs();
-                assert!(score == 0.0 || score.is_normal());
 
-                if let Some(_) = viewer {
-                    unsafe {
-                        score_map.unsafe_put_pixel(x, y, Luma::<f32>([score]));
-                    }
+                unsafe {
+                    score_map.unsafe_put_pixel(x, y, Luma::<f32>([score]));
                 }
             }
         }
 
-        if let Some(v) = viewer {
-            v.log_map(&score_map.as_raw(), w, h, None, "image/shi_tomasi/score_map");
+        if log::max_level() >= log::LevelFilter::Info {
+            if let Some(v) = viewer {
+                v.log_map(&score_map, w, h, "image/shi_tomasi/score_map", None, None);
+            }
         }
         
         score_map
@@ -282,7 +295,7 @@ pub mod feature_detection {
     /// Returned image has zeroes for all inputs pixels which do not have the greatest
     /// intensity in the (2 * radius + 1) square block centred on them.
     /// Ties are resolved lexicographically.
-    pub fn suppress_non_maximum<I>(score_map: &I, radius: u32, threshold: Float) -> Vec<ShiTomasiCorner>
+    pub fn suppress_non_maximum<I>(score_map: &I, radius: u32, threshold: Float, viewer: Option<&dyn FeatureTrackerViewer>) -> Vec<ShiTomasiCorner>
     where
         I: GenericImage<Pixel = Luma<Float>>
     {
@@ -291,6 +304,13 @@ pub mod feature_detection {
         if width == 0 || height == 0 {
             return out;
         }
+
+        let mut suppressed_score_map = if viewer.is_some() && log::max_level() >= log::LevelFilter::Debug  {
+            FloatGrayImage::new(width, height)
+        } else {
+            FloatGrayImage::new(0, 0)
+
+        };
 
         // We divide the image into a grid of blocks of size r * r. We find the maximum
         // value in each block, and then test whether this is in fact the maximum value
@@ -303,7 +323,7 @@ pub mod feature_detection {
             for x in (0..width).step_by(radius as usize + 1) {
                 let mut best_x = x;
                 let mut best_y = y;
-                let mut best_score = score_map.get_pixel(x, y)[0];
+                let mut best_score = unsafe { score_map.unsafe_get_pixel(x, y)[0] };
 
                 // These mins are necessary for when radius > min(width, height)
                 for cy in y..cmp::min(height, y + radius + 1) {
@@ -341,11 +361,19 @@ pub mod feature_detection {
                     failed |= contains_greater_value(score_map, best_x, best_y, best_score, y2, y3, x0, x3);
     
                     if !failed {
-                        out.push(ShiTomasiCorner::new(x, y, best_score))
+                        out.push(ShiTomasiCorner::new(best_x, best_y, best_score));
+                        
+                        if viewer.is_some() && log::max_level() >= log::LevelFilter::Debug {
+                            suppressed_score_map.put_pixel(best_x, best_y, Luma([best_score]));
+                        } 
                     }
                 }
 
             }
+        }
+
+        if let Some(v) = viewer && log::max_level() >= log::LevelFilter::Debug {
+            v.log_map(&suppressed_score_map, width, height, "image/shi_tomasi/score_map_suppressed", Some(rerun::components::Colormap::Turbo), Some(-25.0));
         }
 
         out

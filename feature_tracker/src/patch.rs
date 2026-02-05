@@ -1,5 +1,6 @@
 
 use crate::{image_operations::interpolate_bicubic, types::*};
+use nalgebra::{self as na, ArrayStorage, U3, U52};
 
 pub trait Patch<const SIZE: usize> {
 
@@ -8,7 +9,7 @@ pub trait Patch<const SIZE: usize> {
     /// Returns patch indexes as an array
     fn indexes() -> [[f32; 2]; SIZE]; 
 
-    fn intensities(&self, pyramid_level: usize) -> [f32; SIZE];
+    fn intensities(&self) -> [f32; SIZE];
 }
 
 pub trait DensePatch<const SIZE: usize, const NROWS: usize>: Patch<SIZE> {
@@ -24,13 +25,23 @@ pub trait DensePatch<const SIZE: usize, const NROWS: usize>: Patch<SIZE> {
 }
 
 pub struct Patch52<'a> {
-    pyramid: &'a Pyramid,
+    img: &'a FloatGrayImage,
+    coords: [f32; 2],
+    intensities: [f32; 52]
 }
 
 impl<'a> Patch52<'a> {
-    pub fn new(pyramid: &'a Pyramid) -> Patch52<'a>
+    pub fn new(img: &'a FloatGrayImage, coords: &[f32; 2]) -> Patch52<'a>
     {
-        Self { pyramid }
+        let mut intensities = [0.0; 52];
+        for (point, intensity) in Self::PATTERN_RAW.iter().zip(intensities.iter_mut()) {
+            *intensity = interpolate_bicubic(point, img).unwrap_or(0.0);
+        }
+        Self { img, coords: *coords, intensities }
+    }
+
+    fn compute_se2_jacobian(&self) -> na::Matrix<Float, U52, U3, ArrayStorage<Float, 52, 3>>{
+        todo!()
     }
 }
 
@@ -62,13 +73,8 @@ impl<'a> Patch<52> for Patch52<'a> {
         Self::PATTERN_RAW
     }
 
-    fn intensities(&self, pyramid_level: usize) -> [f32; 52] {
-        let image_level = self.pyramid.get(pyramid_level).unwrap();
-        let mut data = [0.0; 52];
-        for (point, data) in Self::PATTERN_RAW.iter().zip(data.iter_mut()) {
-            *data = interpolate_bicubic(point, image_level).unwrap_or(0.0);
-        }
-        data
+    fn intensities(&self) -> [f32; 52] {
+        self.intensities
     }
 }
 

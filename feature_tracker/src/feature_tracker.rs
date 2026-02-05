@@ -9,6 +9,7 @@ use nalgebra as na;
 
 use crate::ext::Frame;
 use crate::image_operations::*;
+use crate::patch::Patch52;
 use crate::viewer::FeatureTrackerViewer;
 use crate::types::*;
 
@@ -27,7 +28,8 @@ pub struct FeatureTrackingConfig {
     pub preprocessing_blur_sigma: Float,
     pub detection_threshold: Float,
     pub detection_min_dist: u32,
-    pub detection_blur: Float
+    pub detection_blur: Float,
+    pub optical_flow_max_iter: usize
 }
 
 
@@ -94,8 +96,16 @@ impl<'a> FeatureTracker<'a> {
 
 
 
-        if let Some(_previous_pyramid) = self.previous_pyramid.as_ref() {
+        if let Some(previous_pyramid) = self.previous_pyramid.as_ref() {
             println!("there was a previous pyramid");
+            let mut transform_maps = HashMap::new();
+            track_points(
+                previous_pyramid, 
+                &pyramid, 
+                &frame,
+                &mut transform_maps, 
+                self.config.optical_flow_max_iter
+            );
         };
 
         
@@ -125,6 +135,7 @@ impl<'a> FeatureTracker<'a> {
             let labels = frame.features.iter().map(|f| format!("{}", f.feature_id)).collect::<Vec<_>>();
             v.log_features(&coords, "image/features", Some(&labels));
         }
+        
 
 
         self.previous_pyramid = Some(pyramid);
@@ -139,8 +150,79 @@ impl<'a> FeatureTracker<'a> {
 fn track_points(
     pyramid0: &Pyramid,
     pyramid1: &Pyramid,
-    transform_maps0: HashMap<usize, na>
-)
+    frame0: &Frame,
+    transform_maps0: &mut HashMap<usize, na::Isometry2<Float>>,
+    max_iteration: usize
+) {
+
+    for feature in frame0.features.iter() {
+        let transform = track_point(pyramid0, pyramid1, feature, max_iteration);
+        transform_maps0.insert(feature.feature_id, transform);
+    }
+}
+
+fn track_point(
+    pyramid0: &Pyramid,
+    pyramid1: &Pyramid,
+    feature: &Feature,
+    max_iteration: usize
+) -> na::Isometry2<Float>
+{
+
+
+    let (w, h) = pyramid0.first().unwrap().dimensions();
+    let (w, h) = (w as Float, h as Float);
+
+    let [fx, fy] = feature.pixel_coord;
+
+    let mut transform = na::Isometry2::identity();
+    for level in (0..pyramid0.len()).rev()
+    {
+        let img0 = pyramid0.get(level).unwrap();
+        let img1 = pyramid1.get(level).unwrap();
+        let (w_lvl, h_lvl) = img0.dimensions();
+
+        let scaling_x = w_lvl as Float / w;
+        let scaling_y = h_lvl as Float / h;
+        let level_coords = na::Vector2::new(
+            scaling_x*(fx + 0.5) - 0.5, 
+            scaling_y*(fy + 0.5) - 0.5
+        );
+
+        transform = track_point_at_level(
+            img0, 
+            img1, 
+            &level_coords, 
+            &transform, 
+            max_iteration
+        );
+
+        // Scale to the next pyramid level
+        if level > 0 {
+            let (w_next, h_next) = pyramid0.get(level-1).unwrap().dimensions();
+            transform.translation.vector[0] *= w_next as Float / w_lvl as Float;
+            transform.translation.vector[1] *= h_next as Float / h_lvl as Float;
+        }
+
+    }
+    na::Isometry2::identity()
+}
+
+fn track_point_at_level(
+    img0: &FloatGrayImage,
+    img1: &FloatGrayImage,
+    feature_coords: &na::Vector2<Float>,
+    initial_guess: &na::Isometry2<Float>,
+    max_iteration: usize
+) -> na::Isometry2<Float>
+{
+    let mut transform = initial_guess.clone();
+
+    let patch = Patch52::new(img0, feature_coords.as_array());
+
+    na::Isometry2::identity()
+}
+
 
 
 

@@ -95,6 +95,7 @@ mod interpolation_module {
     use std::ops::Not;
 
     use super::*;
+    use nalgebra as na;
     use image::{self, GenericImageView, GrayImage, ImageBuffer, Luma, Pixel, imageops::*};
 
     pub trait InterpolationPoint {
@@ -166,6 +167,59 @@ mod interpolation_module {
         Some(result)
     }
 
+
+    /// Performs bicubic interpolation of the interpolant.
+    /// Returns `None` if the pixel is out-of-bound
+    pub fn d_interpolate_bicubic<PointT: InterpolationPoint, InterpolantT: Interpolant>(
+        point: &PointT, 
+        interpolant: &InterpolantT,
+        dinterpolant_dpoint: &mut na::Vector2<Float>
+    ) -> Option<Float>
+    {   
+        let &[x, y] = point.as_array();
+        let (w,h) = interpolant.dimensions();
+
+        let xf = x.floor() as u32;
+        let yf = y.floor() as u32;
+
+        if  (1..=w.saturating_sub(3)).contains(&xf).not() || 
+            (1..=h.saturating_sub(3)).contains(&yf).not() 
+        {
+            return None // Out-of-bound
+        }
+        
+        
+        let x_low = xf - 1;
+        let y_low = yf - 1;
+        let tx = x - (xf as Float);
+        let ty = y - (yf as Float);
+        let mut fy = [0.0; 4];
+        let mut dfy_tx = [0.0; 4];
+        for dy in 0..4 {
+            let v = y_low+dy;
+            let fx = [
+                interpolant.intensity_at(x_low, v),
+                interpolant.intensity_at(x_low+1, v),
+                interpolant.intensity_at(x_low+2, v),
+                interpolant.intensity_at(x_low+3, v),
+            ];
+
+            let idx = dy as usize;
+            fy[idx] = d_bicubic_1d(&fx, tx, &mut dfy_tx[idx]);
+        }
+
+        let mut dout_dty = 0.0;
+        let mut dout_dfy = [0.0; 4];
+        let out = d_bicubic_1d_full(fy, &mut dout_dfy, ty, &mut dout_dty);
+
+        let dout_dtx = dout_dfy[0]*dfy_tx[0] + dout_dfy[1]*dfy_tx[1] + dout_dfy[2]*dfy_tx[2] + dout_dfy[3]*dfy_tx[3] ;
+
+        dinterpolant_dpoint[0] = dout_dtx;
+        dinterpolant_dpoint[1] = dout_dty;
+
+        Some(out)
+    }
+
     #[inline]
     fn bicubic_1d(
         f: &[Float; 4], t: Float
@@ -178,13 +232,52 @@ mod interpolation_module {
         let result = a0 + 0.5 * (t * ( a1_double + t * ( a2_double + t * a3_double )));
         result
     }
+
+    #[inline]
+    fn d_bicubic_1d(
+        f: &[Float; 4],
+        t: Float, 
+        dout_dt: &mut Float
+    ) -> Float
+    {   
+        let a0 = f[1];
+        let a1_double = f[2] - f[0];
+        let a2_double = 2.0*f[0] - 5.0*f[1] + 4.0*f[2] - f[3];
+        let a3_double = 3.0*(f[1]-f[2]) + f[3] - f[0];
+        let result = a0 + 0.5 * (t * ( a1_double + t * ( a2_double + t * a3_double )));
+
+        *dout_dt =  0.5 * (( a1_double + t * (2.0*a2_double + t * 3.0*a3_double )));
+
+        result
+    }
+
+    fn d_bicubic_1d_full(
+        f: [Float; 4], 
+        dout_df: &mut [Float; 4],
+        t: Float, 
+        dout_dt: &mut Float,
+    ) -> Float
+    {   
+        let a0 = f[1];
+        let a1_double = f[2] - f[0];
+        let a2_double = 2.0*f[0] - 5.0*f[1] + 4.0*f[2] - f[3];
+        let a3_double = 3.0*(f[1]-f[2]) + f[3] - f[0];
+        let result = a0 + 0.5 * (t * ( a1_double + t * ( a2_double + t * a3_double )));
+
+        *dout_dt =  0.5 * (( a1_double + t * (2.0*a2_double + t * 3.0*a3_double )));
+        dout_df[0] = 0.5 * (t * ( -1.0 + t * ( 2.0 + t * -1.0 )));
+        dout_df[1] = 1.0 + 0.5 * (t * ( t * ( -5.0 + t * 3.0 )));
+        dout_df[2] = 0.5 * (t * ( 1.0 + t * ( 4.0 + t * -3.0 )));
+        dout_df[3] = 0.5 * (t * (t * ( -1.0 + t )));
+
+        result
+    }
     
     
     #[cfg(test)]
     mod test {
     
         use super::*;
-        use rand;
     
         #[test]
         fn test_interpolate_bicubic() {
@@ -197,10 +290,75 @@ mod interpolation_module {
             interpolate_bicubic(&p, &interpolant);
         }
 
-        // #[test]
-        // fn test_bicubic_1d() {
-        //     let f = std::array::from_fn(|_| rand::random());
-        //     let out = bicubic_1d(f, 0.5);
-        // }
+
+        use rand::{self, Rng};
+        use rand_distr::StandardNormal;
+        #[test]
+        fn test_d_bicubic() {
+            let delta = f32::EPSILON.sqrt(); // Theoretical best value for finite differences
+            let tol = 50.0*delta;
+            let ntests = 10;
+            let mut rng = rand::rng();
+            
+            // Test d_t
+            for _ in 0..ntests {
+                let f: [f32; 4] = std::array::from_fn(|_i| (&mut rng).sample(StandardNormal)); //.expect("Array of 4 elements");
+                let t: f32 = (&mut rng).sample(StandardNormal);
+                
+                let dt = delta; // Best theoretical value for precision
+                
+                let out_minus = bicubic_1d(&f, t - dt);
+                let out_plus = bicubic_1d(&f, t + dt);
+                let dout_t_fd = (out_plus - out_minus) / (2.0*delta); // Finite differencing
+                
+                let mut dout_t = 0.0;
+                d_bicubic_1d(&f, t, &mut dout_t);
+
+                let mut dout_t_full = 0.0;
+                d_bicubic_1d_full(f, &mut [0.0; 4], t, &mut dout_t_full);
+
+                let error = (dout_t_fd - dout_t).abs();
+                assert!(error <= tol, "delta is bigger than tol: {error} > {tol}");
+
+                let error = (dout_t_fd - dout_t_full).abs();
+                assert!(error <= tol, "delta is bigger than tol: {error} > {tol}");
+
+                for i in 0..4 {
+                    let f: [f32; 4] = std::array::from_fn(|_i| (&mut rng).sample(StandardNormal)); //.expect("Array of 4 elements");
+                    let t: f32 = (&mut rng).sample(StandardNormal);
+
+                    let mut df = [0.0; 4];
+                    df[i] = delta;
+
+                    let fplus = std::array::from_fn(|i| f[i] + df[i]);
+                    let out_plus  = bicubic_1d(&fplus, t);
+                    let fminus = std::array::from_fn(|i| f[i] - df[i]);
+                    let out_minus = bicubic_1d(&fminus, t);
+                    let dout_fi_fd = (out_plus - out_minus) / (2.0*delta);
+
+                    let mut dout_t = 0f32;
+                    let mut dout_f = [0f32; 4];
+                    d_bicubic_1d_full(f, &mut dout_f, t, &mut dout_t);
+
+                    let error = (dout_f[i] - dout_fi_fd).abs();
+                    assert!(
+                        error <= tol, 
+                        "delta is bigger than tol: {error} > {tol}\n\
+                        Finite difference: dout_f{i} = {dout_fi_fd}\n\
+                        Tested grad method: dout_f{i} = {}",
+                        dout_f[i]
+                    );
+                }
+
+
+            }
+
+            
+
+
+        }
+
     }
+
+    
 }

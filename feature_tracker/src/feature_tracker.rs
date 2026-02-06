@@ -9,7 +9,7 @@ use nalgebra as na;
 
 use crate::ext::Frame;
 use crate::image_operations::*;
-use crate::patch::Patch52;
+use crate::patch::{Patch, Patch52};
 use crate::viewer::FeatureTrackerViewer;
 use crate::types::*;
 
@@ -24,12 +24,16 @@ pub mod feature_detection;
 pub struct FeatureTrackingConfig {
     pub nlevels: usize, // Number of pyramid levels
     pub ratio: f64, // Ratio of size between each levels
+
     pub preprocessing_blur: bool,
     pub preprocessing_blur_sigma: Float,
+
     pub detection_threshold: Float,
     pub detection_min_dist: u32,
     pub detection_blur: Float,
-    pub optical_flow_max_iter: usize
+
+    pub optical_flow_max_iter: usize,
+    pub optical_flow_lm_lambda: Float
 }
 
 
@@ -45,7 +49,7 @@ pub struct Feature {
 
 pub struct FeatureTracker<'a> {
     config: FeatureTrackingConfig,
-    previous_pyramid: Option<Pyramid>,
+    previous_frame_pyramid: Option<(Frame, Pyramid)>,
     viewer: Option<&'a dyn FeatureTrackerViewer>,
     last_keypoint_id: usize
 }
@@ -57,7 +61,7 @@ impl<'a> FeatureTracker<'a> {
     ) -> Self {
         FeatureTracker { 
             config, 
-            previous_pyramid: None, 
+            previous_frame_pyramid: None, 
             viewer,
             last_keypoint_id: 0
         }
@@ -69,7 +73,7 @@ impl<'a> FeatureTracker<'a> {
         id
     }
 
-    pub fn process_frame(&mut self, in_image: &FloatGrayImage, frame: &mut Frame) 
+    pub fn process_frame(&mut self, in_image: &FloatGrayImage, mut frame: Frame) 
     {   
 
         if let Some(v) = self.viewer {
@@ -96,16 +100,31 @@ impl<'a> FeatureTracker<'a> {
 
 
 
-        if let Some(previous_pyramid) = self.previous_pyramid.as_ref() {
-            println!("there was a previous pyramid");
+        if let Some((previous_frame, previous_pyramid)) = self.previous_frame_pyramid.as_ref() 
+        {
             let mut transform_maps = HashMap::new();
             track_points(
                 previous_pyramid, 
                 &pyramid, 
-                &frame,
+                &previous_frame,
                 &mut transform_maps, 
-                self.config.optical_flow_max_iter
+                self.config.optical_flow_max_iter,
+                self.config.optical_flow_lm_lambda
             );
+            println!("Transforms len: {}", transform_maps.len());
+            if let Some(v) = self.viewer {
+                let tracked_points = previous_frame.features.iter().filter_map(|f| {
+                    transform_maps.get(&f.feature_id).and_then(
+                        |transform| Some((transform* na::Point2::new(f.pixel_coord[0], f.pixel_coord[1]), f.feature_id))
+                    )
+                }).map(|(point, id)| (<Vec2 as AsRef<[Float; 2]>>::as_ref(&point.coords).clone(), id))
+                .collect::<Vec<_>>();
+
+                let coords = tracked_points.iter().map(|(coord, _)| *coord).collect::<Vec<_>>();
+                let ids = tracked_points.iter().map(|(_, id)| format!("{id}")).collect::<Vec<_>>();
+                v.log_features(&coords, "image/old_features", Some(&ids), Some(rerun::Color::from_rgb(0, 255, 0)));
+                v.log_image_raw(&previous_pyramid[0].clone().into(), "image/old_image");
+            }
         };
 
         
@@ -133,16 +152,18 @@ impl<'a> FeatureTracker<'a> {
         if let Some(v) = self.viewer {
             let coords = frame.features.iter().map(|f| f.pixel_coord).collect::<Vec<_>>();
             let labels = frame.features.iter().map(|f| format!("{}", f.feature_id)).collect::<Vec<_>>();
-            v.log_features(&coords, "image/features", Some(&labels));
+            v.log_features(&coords, "image/features", Some(&labels), None);
         }
+
+
         
 
 
-        self.previous_pyramid = Some(pyramid);
+        self.previous_frame_pyramid = Some((frame, pyramid));
     }
 
     pub fn get_pyramid(&self) -> Option<&Pyramid> {
-        self.previous_pyramid.as_ref()
+        self.previous_frame_pyramid.as_ref().map(|(_, pyr)| pyr)
     }
 }
 
@@ -152,11 +173,12 @@ fn track_points(
     pyramid1: &Pyramid,
     frame0: &Frame,
     transform_maps0: &mut HashMap<usize, na::Isometry2<Float>>,
-    max_iteration: usize
+    max_iteration: usize,
+    lm_lambda: Float
 ) {
 
     for feature in frame0.features.iter() {
-        let transform = track_point(pyramid0, pyramid1, feature, max_iteration);
+        let transform = track_point(pyramid0, pyramid1, feature, max_iteration, lm_lambda);
         transform_maps0.insert(feature.feature_id, transform);
     }
 }
@@ -165,7 +187,8 @@ fn track_point(
     pyramid0: &Pyramid,
     pyramid1: &Pyramid,
     feature: &Feature,
-    max_iteration: usize
+    max_iteration: usize,
+    lm_lambda: Float
 ) -> na::Isometry2<Float>
 {
 
@@ -194,7 +217,8 @@ fn track_point(
             img1, 
             &level_coords, 
             &transform, 
-            max_iteration
+            max_iteration,
+            lm_lambda
         );
 
         // Scale to the next pyramid level
@@ -205,22 +229,136 @@ fn track_point(
         }
 
     }
-    na::Isometry2::identity()
+    
+    transform
 }
+
 
 fn track_point_at_level(
     img0: &FloatGrayImage,
     img1: &FloatGrayImage,
     feature_coords: &na::Vector2<Float>,
     initial_guess: &na::Isometry2<Float>,
-    max_iteration: usize
+    max_iteration: usize,
+    lm_lambda: Float
 ) -> na::Isometry2<Float>
 {
     let mut transform = initial_guess.clone();
 
-    let patch = Patch52::new(img0, feature_coords.as_array());
+    let patch = Patch52::new(img0, feature_coords.as_ref(), lm_lambda);
+    let jac = patch.jacobian();
+    let inverse_hessian = patch.inverse_hessian();
 
-    na::Isometry2::identity()
+    for _ in 0..max_iteration {
+        let residuals = patch.residuals(img1, &transform);
+        let b = - jac.transpose() * residuals;
+        let twist = inverse_hessian * b;
+        transform *= exp_se2(&(-twist));
+        if twist.norm() < 1e-3 {
+            break
+        }
+    }
+
+    transform
+}
+
+fn exp_se2(twist: &na::Vector3<Float>) ->  na::Isometry2<Float> {
+    let theta = twist[0];
+    let v = twist.fixed_rows::<2>(1);
+    
+    let (diag, cross_diag) = if theta.abs() > 1e-4 {
+        (
+            theta.sin() / theta, 
+            (1.0 - theta.cos()) / theta
+        )
+    } else {
+        let theta_sq = theta*theta;
+        (
+            1.0 - theta.powi(2)/6.0,
+            (0.5 - theta_sq / 24.0)*theta
+        )
+    };
+
+    let translation = na::Vector2::new(
+        diag*v[0] - cross_diag*v[1],
+        cross_diag*v[0] + diag*v[1]
+    );
+
+    na::Isometry2::<Float>::new(translation, theta)
+
+}
+
+
+fn log_se2(transformation: &na::Isometry2<Float>) -> na::Vector3<Float>
+{
+    let t_matrix = transformation.to_matrix();
+    let theta = Float::atan2(t_matrix[(1, 0)], t_matrix[(0, 0)]);
+    let diag = if theta.abs() > 1e-3 {
+        let diag = theta * theta.sin() / (2.0 * (1.0 - theta.cos()));
+        if !diag.is_finite() {
+            println!("theta: {theta:?}");
+        }
+        assert!(diag.is_finite());
+        diag
+    } else {
+        let theta_sq = theta.powi(2);
+        let diag = (1.0 - theta_sq / 6.0) / (1.0 - theta_sq  / 12.0);
+        assert!(diag.is_finite());
+        diag
+    };
+    let cross_diag = 0.5*theta;
+    let translation = transformation.translation.vector;
+    let v1 = diag * translation[0] + cross_diag * translation[1];
+    let v2 = -cross_diag * translation[0] + diag * translation[1];
+    na::Vector3::new(theta, v1, v2)
+}
+
+#[cfg(test)]
+mod test {
+
+    use super::*;
+
+    fn check_se2_log(twist: &na::Vector3<f32>) {
+        let pi = std::f32::consts::PI;
+
+        let transformation = exp_se2(twist);
+        let mut twist_prime = log_se2(&transformation);
+        let mut tau = twist.to_owned();
+
+        tau[0] = tau[0] - tau[0].div_euclid(2.0*pi) * 2.0*pi;
+        twist_prime[0] = twist_prime[0] - twist_prime[0].div_euclid(2.0*pi) * 2.0*pi;
+
+        assert!(twist.relative_eq(&twist_prime, 1e-6, 1e-6));
+    }
+
+    #[test]
+    fn test_exp_se2() {
+        let pi = std::f32::consts::PI;
+        let tol = 1e-6;
+
+        let twist = na::Vector3::<Float>::new(0.0, 0.0, 0.0);
+        let transformation = exp_se2(&twist);
+        assert!(transformation.rotation.to_rotation_matrix().matrix().relative_eq(&na::Matrix2::<Float>::from_row_slice(&[1.0, 0.0, 0.0, 1.0]), tol, tol));
+        assert!(transformation.translation.vector.relative_eq(&Vec2::new(0.0, 0.0), tol, tol));
+
+        
+        let twist = na::Vector3::<Float>::new(pi, 0.0, 0.0);
+        let transformation = exp_se2(&twist);
+        assert!(transformation.rotation.to_rotation_matrix().matrix().relative_eq(&na::Matrix2::<Float>::from_row_slice(&[-1.0, 0.0, 0.0, -1.0]), tol, tol));
+        assert!(transformation.translation.vector.relative_eq(&Vec2::new(0.0, 0.0), tol, tol));
+
+        let twist = na::Vector3::<Float>::new(0.0, 1.32, -1.56);
+        let transformation = exp_se2(&twist);
+        assert!(transformation.rotation.to_rotation_matrix().matrix().relative_eq(&na::Matrix2::<Float>::from_row_slice(&[1.0, 0.0, 0.0, 1.0]), tol, tol));
+        assert!(transformation.translation.vector.relative_eq(&Vec2::new(1.32, -1.56), tol, tol));
+
+        check_se2_log(&na::Vector3::new(0.0, 0.0, 0.0));
+        check_se2_log(&na::Vector3::new(pi / 3.0, 1.0, 2.5));
+        check_se2_log(&na::Vector3::new(1.795, 1.0, 2.5));
+        check_se2_log(&na::Vector3::new(1e-8, 1.0, 2.5));
+        check_se2_log(&na::Vector3::new(1e-7, 1.0, 2.5));
+        check_se2_log(&na::Vector3::new(2e-7, 1.0, 2.5));
+    }
 }
 
 

@@ -34,7 +34,7 @@ impl TartanAirPlayer {
             .collect();
         left_images.sort_by_key(|dir_entry| dir_entry.path());
         
-        for file in left_images.iter().skip(300).take(100) {
+        for file in left_images.iter().skip(300).take(10) {
 
             let frame_id = file.path()
                 .file_stem().unwrap()
@@ -45,9 +45,9 @@ impl TartanAirPlayer {
             rec.set_time_sequence("frame_id", frame_id);
 
             let frame_image = image::open(file.path())?;
-            let mut frame = Frame::new(frame_id);
+            let frame = Frame::new(frame_id);
 
-            tracker.process_frame(&frame_image.to_luma32f(), &mut frame);
+            tracker.process_frame(&frame_image.to_luma32f(), frame);
 
 
 

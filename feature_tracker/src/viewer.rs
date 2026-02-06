@@ -10,7 +10,7 @@ pub trait FeatureTrackerViewer {
     fn log_image_raw(&self, image: &DynamicImage, entity_path: &str);
     
     /// Log image with features drawn on it
-    fn log_features(&self, features: &[[f32; 2]], entity_path: &str, labels: Option<&[String]>);
+    fn log_features(&self, features: &[[f32; 2]], entity_path: &str, labels: Option<&[String]>, color: Option<rr::Color>);
 
     fn log_image_pyramid(&self, pyramid: &[&DynamicImage], entity_path: &str);
 
@@ -50,13 +50,13 @@ impl FeatureTrackerViewer for rr::RecordingStream {
         }
     }
 
-    fn log_features(&self, features: &[[f32; 2]], entity_path: &str, ids: Option<&[String]>) {
+    fn log_features(&self, features: &[[f32; 2]], entity_path: &str, ids: Option<&[String]>, color: Option<rr::Color>) {
         let mut points = rr::Points2D::new(
                     features.iter()
                         .map(|[x,y]| [x+0.5, y+0.5])
                 )
                 .with_draw_order(100.0)
-                .with_colors([rr::Color::from_rgb(255, 0, 0)])
+                .with_colors([color.unwrap_or(rr::Color::from_rgb(255, 0, 0))])
                 .with_radii([rr::Radius::new_ui_points(2.5)]);
         if let Some(ids) = ids {
             points = points.with_labels(ids.into_iter().cloned());

@@ -95,8 +95,8 @@ mod interpolation_module {
     use std::ops::Not;
 
     use super::*;
-    use nalgebra as na;
-    use image::{self, GenericImageView, GrayImage, ImageBuffer, Luma, Pixel, imageops::*};
+    use nalgebra::{self as na, Point2};
+    // use image::{self};
 
     pub trait InterpolationPoint {
         fn as_array(&self) -> &[Float; 2];
@@ -106,9 +106,9 @@ mod interpolation_module {
             self
         }
     }
-    impl InterpolationPoint for Vec2 {
+    impl InterpolationPoint for Point2<Float> {
         fn as_array(&self) -> &[Float; 2] {
-            self.as_ref()
+            self.coords.as_ref()
         }
     }
 
@@ -173,7 +173,7 @@ mod interpolation_module {
     pub fn d_interpolate_bicubic<PointT: InterpolationPoint, InterpolantT: Interpolant>(
         point: &PointT, 
         interpolant: &InterpolantT,
-        dinterpolant_dpoint: &mut na::Vector2<Float>
+        dinterpolant_dpoint: &mut RowVec2
     ) -> Option<Float>
     {   
         let &[x, y] = point.as_array();
@@ -285,7 +285,7 @@ mod interpolation_module {
             let interpolant = FloatGrayImage::new(100, 100);
             interpolate_bicubic(&p, &interpolant);
     
-            let p = Vec2::new(1.0, 2.0);
+            let p = na::Point2::new(1.0, 2.0);
             let interpolant = FloatGrayImage::new(100, 100);
             interpolate_bicubic(&p, &interpolant);
         }

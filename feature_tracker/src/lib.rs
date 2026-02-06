@@ -5,6 +5,8 @@ pub mod viewer;
 pub mod patch;
 pub mod image_operations;
 
+
+
 pub mod types {
 
     use image::{ImageBuffer, Luma, Pixel};
@@ -16,6 +18,7 @@ pub mod types {
     pub type Pyramid = Vec<FloatGrayImage>;
 
     pub type Vec2 = na::Vector2::<Float>;
+    pub type RowVec2 = na::RowVector2::<Float>;
 
     #[cfg(test)]
     mod tests {

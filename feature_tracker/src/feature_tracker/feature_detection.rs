@@ -58,6 +58,8 @@ pub fn add_points(
     let corners = suppress::local_maxima(&corners, min_dist_between_points);
     
     let (w, h) = image_fine.dimensions();
+
+    let buffer = u32::max(min_dist_between_points, 50);
     let xrange = min_dist_between_points..(w-min_dist_between_points);
     let yrange = min_dist_between_points..(h-min_dist_between_points);
     corners

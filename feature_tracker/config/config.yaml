@@ -4,9 +4,9 @@ ratio: 2.0
 preprocessing_blur: True
 preprocessing_blur_sigma: 1.5
 
-detection_min_dist: 30
+detection_min_dist: 40
 detection_threshold: 1.0
 detection_blur: 4.0
 
-optical_flow_max_iter: 100
+optical_flow_max_iter: 20
 optical_flow_lm_lambda: 2.0

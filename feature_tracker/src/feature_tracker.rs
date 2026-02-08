@@ -91,8 +91,17 @@ impl<'a> FeatureTracker<'a> {
             self.config.preprocessing_blur_sigma
         );
         if let Some(v) = self.viewer {
-            let dynimage_pyramid = pyramid.iter().map(|level_img| level_img.clone().into()).collect::<Vec<_>>();
-            v.log_image_pyramid(&dynimage_pyramid.iter().collect::<Vec<_>>(), "pyramid");
+            let dynimage_pyramid = pyramid.iter()
+                .map(|level_img| level_img.clone().into())
+                .collect::<Vec<_>>();
+            let prev_pyr = self.previous_frame_pyramid.as_ref().map(|(_, prev_pyr)| prev_pyr);
+            let dynimage_prev_pyr = prev_pyr.map(|p| 
+                p.iter()
+                 .map(|level_img| level_img.clone().into())
+                 .collect::<Vec<_>>()
+            );
+            
+            v.log_image_pyramid(&dynimage_pyramid, (&dynimage_prev_pyr).as_ref().map(|p| &**p), "pyramid");
             let img_fine = pyramid[0].clone().into();
             v.log_image_raw(&img_fine, "image/preprocessed");
         }
@@ -109,7 +118,8 @@ impl<'a> FeatureTracker<'a> {
                 &previous_frame,
                 &mut transform_maps, 
                 self.config.optical_flow_max_iter,
-                self.config.optical_flow_lm_lambda
+                self.config.optical_flow_lm_lambda,
+                self.viewer
             );
             println!("Transforms len: {}", transform_maps.len());
             if let Some(v) = self.viewer {
@@ -174,11 +184,19 @@ fn track_points(
     frame0: &Frame,
     transform_maps0: &mut HashMap<usize, na::Isometry2<Float>>,
     max_iteration: usize,
-    lm_lambda: Float
+    lm_lambda: Float,
+    viewer: Option<&dyn FeatureTrackerViewer>
 ) {
 
     for feature in frame0.features.iter() {
-        let transform = track_point(pyramid0, pyramid1, feature, max_iteration, lm_lambda);
+        let transform = track_point(
+            pyramid0, 
+            pyramid1, 
+            feature, 
+            max_iteration, 
+            lm_lambda,
+            viewer
+        );
         transform_maps0.insert(feature.feature_id, transform);
     }
 }
@@ -188,7 +206,8 @@ fn track_point(
     pyramid1: &Pyramid,
     feature: &Feature,
     max_iteration: usize,
-    lm_lambda: Float
+    lm_lambda: Float,
+    viewer: Option<&dyn FeatureTrackerViewer>
 ) -> na::Isometry2<Float>
 {
 
@@ -200,7 +219,8 @@ fn track_point(
 
     let mut transform = na::Isometry2::identity();
     for level in (0..pyramid0.len()).rev()
-    {
+    {   
+        
         let img0 = pyramid0.get(level).unwrap();
         let img1 = pyramid1.get(level).unwrap();
         let (w_lvl, h_lvl) = img0.dimensions();
@@ -218,7 +238,10 @@ fn track_point(
             &level_coords, 
             &transform, 
             max_iteration,
-            lm_lambda
+            lm_lambda,
+            level,
+            feature.feature_id,
+            viewer
         );
 
         // Scale to the next pyramid level
@@ -240,7 +263,10 @@ fn track_point_at_level(
     feature_coords: &na::Vector2<Float>,
     initial_guess: &na::Isometry2<Float>,
     max_iteration: usize,
-    lm_lambda: Float
+    lm_lambda: Float,
+    level: usize,
+    feature_id: usize,
+    viewer: Option<&dyn FeatureTrackerViewer>
 ) -> na::Isometry2<Float>
 {
     let mut transform = initial_guess.clone();
@@ -249,18 +275,47 @@ fn track_point_at_level(
     let jac = patch.jacobian();
     let inverse_hessian = patch.inverse_hessian();
 
-    for _ in 0..max_iteration {
+    if let Some(v) = viewer && log::max_level() >= log::LevelFilter::Debug {
+        v.log_features(
+            &patch.shifted_indexes(&transform), 
+            &format!("pyramid/level{level}/features/{feature_id}/patch"), None, None);
+    }
+
+    let mut iterates = Vec::new();
+    for i in 0..max_iteration {
+        log::debug!("Feature id: {feature_id}");
+        log::debug!("iter: {i}");
+
+        if viewer.is_some() {
+            let shifted_coords = patch.shifted_center(&transform);
+            iterates.push(shifted_coords);
+        }
+
         let residuals = patch.residuals(img1, &transform);
-        let b = - jac.transpose() * residuals;
+        log::debug!("{}\n", residuals.norm());
+        let b = jac.transpose() * residuals;
         let twist = inverse_hessian * b;
-        transform *= exp_se2(&(-twist));
+        let mut d_transform = exp_se2(&(-twist));
+        d_transform.rotation = na::UnitComplex::identity();
+        transform *= d_transform;
         if twist.norm() < 1e-3 {
             break
         }
     }
 
+    if let Some(v) = viewer && log::max_level() >= log::LevelFilter::Debug {
+        let labels = (0..iterates.len()).map(|i| format!("{i}")).collect::<Vec<_>>();
+        v.log_features(
+            &iterates, 
+            &format!("pyramid/level{level}/features/{feature_id}/iterates"), 
+            Some(&labels), 
+            None
+        );
+    }
+
     transform
 }
+
 
 fn exp_se2(twist: &na::Vector3<Float>) ->  na::Isometry2<Float> {
     let theta = twist[0];

@@ -12,7 +12,7 @@ pub trait FeatureTrackerViewer {
     /// Log image with features drawn on it
     fn log_features(&self, features: &[[f32; 2]], entity_path: &str, labels: Option<&[String]>, color: Option<rr::Color>);
 
-    fn log_image_pyramid(&self, pyramid: &[&DynamicImage], entity_path: &str);
+    fn log_image_pyramid(&self, pyramid: &[DynamicImage], previous_pyramid: Option<&[DynamicImage]>, entity_path: &str);
 
     fn log_map(&self, img: &[f32], width: u32, height: u32, entity_path: &str, cmap: Option<rr::components::Colormap>, draw_order: Option<f32>);
     
@@ -37,15 +37,27 @@ impl FeatureTrackerViewer for rr::RecordingStream {
             .unwrap();
     }
 
-    fn log_image_pyramid(&self, pyramid: &[&DynamicImage], entity_path: &str) 
+    fn log_image_pyramid(&self, pyramid: &[DynamicImage], previous_pyramid: Option<&[DynamicImage]>, entity_path: &str) 
     {
         for (l, image_l) in pyramid.iter().enumerate() {
             let mut jpeg_bytes = Vec::new();
             let mut encoder = JpegEncoder::new(&mut jpeg_bytes);
-            encoder.encode_image(*image_l).unwrap();
+            encoder.encode_image(image_l).unwrap();
             self.log(
-                format!("{entity_path}/level{l}"), 
-                &rr::EncodedImage::from_file_contents(jpeg_bytes).with_draw_order(l as f32)
+                format!("{entity_path}/level{l}/current"), 
+                &rr::EncodedImage::from_file_contents(jpeg_bytes).with_draw_order((10*l+1) as f32)
+            ).unwrap();
+        }
+
+        let Some(pyramid) = previous_pyramid else {return};
+
+        for (l, image_l) in pyramid.iter().enumerate() {
+            let mut jpeg_bytes = Vec::new();
+            let mut encoder = JpegEncoder::new(&mut jpeg_bytes);
+            encoder.encode_image(image_l).unwrap();
+            self.log(
+                format!("{entity_path}/level{l}/previous"), 
+                &rr::EncodedImage::from_file_contents(jpeg_bytes).with_draw_order((10*l) as f32)
             ).unwrap();
         }
     }

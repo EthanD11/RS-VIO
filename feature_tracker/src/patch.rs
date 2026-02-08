@@ -7,7 +7,11 @@ pub trait Patch<const SIZE: usize> {
     const PATTERN_RAW: [[f32; 2]; SIZE];
 
     /// Returns patch indexes as an array
-    fn indexes() -> [[f32; 2]; SIZE]; 
+    fn raw_indexes() -> [[f32; 2]; SIZE]; 
+
+    fn shifted_indexes(&self, transform: &na::Isometry2<Float>) -> [[f32; 2]; SIZE];
+
+    fn shifted_center(&self, transform: &na::Isometry2<Float>) -> [f32; 2];
 
     fn intensities(&self) -> [f32; SIZE];
 
@@ -71,7 +75,7 @@ impl<'a> Patch52<'a> {
 
         
         let mut dimg_dpixel = RowVec2::zeros();
-        for ((shift, mut dri_dtwist), intensity) in Self::PATTERN_RAW.iter()
+        for ((shift, mut dri_dtwist), intensity) in Self::raw_indexes().iter()
             .zip(dr_dtwist.row_iter_mut())
             .zip(intensities.iter_mut())
         {
@@ -92,8 +96,6 @@ impl<'a> Patch52<'a> {
 
             dtransform_dtwist[(0,0)] = -pixel_coords[1];
             dtransform_dtwist[(1,0)] =  pixel_coords[0];
-
-            println!("dtransform: {}", dtransform_dtwist);
 
             *intensity = d_interpolate_bicubic(&pixel_coords, img, &mut dimg_dpixel)
                 .unwrap_or(0.0);
@@ -134,8 +136,38 @@ impl<'a> Patch<52> for Patch52<'a> {
     ];
 
     #[inline]
-    fn indexes() -> [[f32; 2]; 52] {
-        Self::PATTERN_RAW
+    fn raw_indexes() -> [[f32; 2]; 52] {
+        Self::PATTERN_RAW.map(|coords| coords.map(|c| c / 2.0))
+    }
+
+    fn shifted_indexes(&self, transform: &na::Isometry2<Float>) -> [[f32; 2]; 52] {
+        let center = self.center_coords;
+        let mut indexes = [[0.0f32; 2]; 52];
+        for (shift, index) in Self::raw_indexes().iter().zip(indexes.iter_mut())
+        {
+            let pixel_coords = Point2::new(
+                center[0]+shift[0], 
+                center[1]+shift[1]
+            );
+            
+            let pixel_coords = transform * pixel_coords;
+            index[0] = pixel_coords[0];
+            index[1] = pixel_coords[1];
+        }
+        indexes
+    }
+
+    fn shifted_center(&self, transform: &nalgebra::Isometry2<Float>) -> [f32; 2] {        
+        let center = self.center_coords;
+        let pixel_coords = Point2::new(
+            center[0], 
+            center[1]
+        );
+        let pixel_coords = transform * pixel_coords;
+        let mut index = [0.0f32; 2];
+        index[0] = pixel_coords[0];
+        index[1] = pixel_coords[1];
+        index
     }
 
     fn intensities(&self) -> [f32; 52] {
@@ -145,7 +177,7 @@ impl<'a> Patch<52> for Patch52<'a> {
     fn residuals(&self, img: &FloatGrayImage, transform: &na::Isometry2<Float>) -> nalgebra::SVector<Float, 52> {
         let center = self.center_coords;
         let mut residuals = na::SVector::<_, 52>::zeros();
-        for ((shift, res), intensity_host) in Self::PATTERN_RAW.iter()
+        for ((shift, res), intensity_host) in Self::raw_indexes().iter()
             .zip(residuals.iter_mut())
             .zip(self.intensities.iter())
         {

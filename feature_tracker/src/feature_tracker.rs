@@ -47,7 +47,7 @@ pub struct Feature {
     pub feature_id: usize,
 
     /// Pixel coordinate in the left image (u, v).
-    pub pixel_coord: na::Point2<Float>,
+    pub central_point: na::Point2<Float>,
 }
 
 
@@ -109,6 +109,7 @@ impl<'a> FeatureTracker<'a> {
             v.log_image_pyramid(&dynimage_pyramid, (&dynimage_prev_pyr).as_ref().map(|p| &**p), "pyramid");
             let img_fine = pyramid[0].clone().into();
             v.log_image_raw(&img_fine, "image/preprocessed");
+
         }
 
 
@@ -134,13 +135,15 @@ impl<'a> FeatureTracker<'a> {
                         .and_then(|transform| Some(
                             Feature {
                                 feature_id: feature.feature_id,
-                                pixel_coord: transform * feature.pixel_coord
+                                central_point: transform * feature.central_point
                             }
                         ))
                 })
                 .collect();
 
+            println!("tracked features: {}", tracked_features.len());
             frame.features.extend(tracked_features);
+
 
             // if let Some(v) = self.viewer {
             //     let coords: Vec<[f32; 2]> = tracked_points.iter().map(|feature| feature.pixel_coord.into()).collect();
@@ -169,14 +172,14 @@ impl<'a> FeatureTracker<'a> {
             .map(|corner| 
                 Feature { 
                     feature_id: self.next_id(), 
-                    pixel_coord: na::Point2::new(corner.x() as f32, corner.y() as f32)
+                    central_point: na::Point2::new(corner.x() as f32, corner.y() as f32)
                 });
 
         frame.features.extend(new_features);
 
         if let Some(v) = self.viewer {
-            let coords = frame.features.iter().map(|f| f.pixel_coord.coords.into()).collect::<Vec<_>>();
-            let labels = frame.features.iter().map(|f| format!("{}", f.feature_id)).collect::<Vec<_>>();
+            let coords = frame.features.iter().map(|f| f.central_point.coords.into()).collect::<Vec<_>>();
+            let labels = frame.features.iter().map(|f| format!("{}", f.feature_id % 600)).collect::<Vec<_>>();
             v.log_features(&coords, "image/features", Some(&labels), None);
         }
 
@@ -200,7 +203,7 @@ fn track_points(
 ) {
 
     for feature in frame0.features.iter() {
-        let tracking_result = track_point(
+        let tracking_result0 = track_point(
             pyramid0, 
             pyramid1, 
             feature, 
@@ -208,8 +211,27 @@ fn track_points(
             lm_lambda,
             viewer
         );
-        if let Ok(transform) = tracking_result {
-            transform_maps0.insert(feature.feature_id, transform);
+        if let Ok(transform0) = tracking_result0 {
+            let feature1 = Feature {
+                feature_id: feature.feature_id,
+                central_point: transform0 * feature.central_point
+            };
+            let tracking_result1 = track_point(
+                pyramid1, 
+                pyramid0, 
+                &feature1, 
+                max_iteration, 
+                lm_lambda,
+                viewer
+            );
+            
+            if let Ok(transform1) = tracking_result1 {
+                let center_return = transform1 * feature1.central_point;
+                if (feature.central_point - center_return).norm() < 2.0 {
+                    transform_maps0.insert(feature.feature_id, transform0);
+                }
+            }
+
         }
     }
 }
@@ -234,8 +256,8 @@ fn track_point(
     let (w, h) = pyramid0.first().unwrap().dimensions();
     let (w, h) = (w as Float, h as Float);
 
-    let fx = feature.pixel_coord.x;
-    let fy = feature.pixel_coord.y;
+    let fx = feature.central_point.x;
+    let fy = feature.central_point.y;
 
     let mut transform = na::Isometry2::identity();
     for level in (0..pyramid0.len()).rev()

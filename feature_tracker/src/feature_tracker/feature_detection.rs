@@ -19,8 +19,8 @@ impl ShiTomasiCorner {
 
     fn from_feature(f: &Feature, score: f32) -> ShiTomasiCorner {
         ShiTomasiCorner { 
-            x: f.pixel_coord[0].round() as u32, 
-            y: f.pixel_coord[1].round() as u32, 
+            x: f.central_point[0].round() as u32, 
+            y: f.central_point[1].round() as u32, 
             score, 
             from_past_feature: true
         }

@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::fs;
 
+use env_logger;
 use anyhow::Result;
 use image::{self};
 use rerun as rr;
@@ -21,6 +22,8 @@ impl TartanAirPlayer {
     }
 
     pub fn run(&self, config: FeatureTrackingConfig) -> Result<()> {
+        env_logger::init();
+
         let rec = rr::RecordingStreamBuilder::new("Patch Tracker").spawn()?;
 
         let mut tracker = FeatureTracker::new(config, Some(&rec as &dyn FeatureTrackerViewer));

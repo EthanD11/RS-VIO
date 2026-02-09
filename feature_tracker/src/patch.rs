@@ -17,7 +17,7 @@ pub trait Patch<const SIZE: usize> {
 
     fn center(&self) -> &na::Point2<Float>;
 
-    fn intensities(&self) -> &[f32; SIZE];
+    fn datas(&self) -> &[f32; SIZE];
     
     fn jacobian(&self) -> &na::SMatrix<Float, SIZE, 3>;
     
@@ -58,16 +58,16 @@ pub trait Patch<const SIZE: usize> {
         use MatchingCost::*;
         match matching_cost {
             SSD => self.residuals_ssd(img, transform),
-            LSSD => todo!()
+            LSSD => self.residuals_lssd(img, transform)
         }
     }
 
     fn residuals_ssd(&self, img: &FloatGrayImage, transform: &na::Isometry2<Float>) -> nalgebra::SVector<Float, 52> {
         let center = self.center();
         let mut residuals = na::SVector::<_, 52>::zeros();
-        for ((shift, res), intensity_host) in Self::raw_indexes().iter()
+        for ((shift, res), data_host) in Self::raw_indexes().iter()
             .zip(residuals.iter_mut())
-            .zip(self.intensities().iter())
+            .zip(self.datas().iter())
         {
             let pixel_coords = Point2::new(
                 center[0]+shift[0], 
@@ -75,7 +75,31 @@ pub trait Patch<const SIZE: usize> {
             );
 
             let pixel_coords = transform * pixel_coords;
-            *res = interpolate_bicubic(&pixel_coords, img).unwrap_or(0.0) - intensity_host;
+            let data_target = interpolate_bicubic(&pixel_coords, img).unwrap_or(0.0); 
+            *res = data_target - data_host;
+        }
+        residuals
+    }
+
+    fn residuals_lssd(&self, img: &FloatGrayImage, transform: &na::Isometry2<Float>) -> nalgebra::SVector<Float, 52> {
+        let center = self.center();
+        let mut residuals = na::SVector::<_, 52>::zeros();
+        for (shift, data_target) in Self::raw_indexes().iter()
+            .zip(residuals.iter_mut())
+        {
+            let pixel_coords = Point2::new(
+                center[0]+shift[0], 
+                center[1]+shift[1]
+            );
+
+            let pixel_coords = transform * pixel_coords;
+            *data_target = interpolate_bicubic(&pixel_coords, img).unwrap_or(0.0);
+        }
+        residuals /= residuals.mean();
+
+        for (res, data_host) in residuals.iter_mut().zip(self.datas().iter())
+        {
+            *res -= data_host;
         }
         residuals
     }
@@ -87,7 +111,7 @@ pub trait Patch<const SIZE: usize> {
         use MatchingCost::*;
         match matching_cost {
             SSD => Self::compute_intensities_and_jacobian_ssd(img, center),
-            LSSD => todo!()
+            LSSD => Self::compute_intensities_and_jacobian_lssd(img, center)
         }
     }
 
@@ -100,7 +124,7 @@ pub trait Patch<const SIZE: usize> {
         let mut intensities = [0.0; 52];
         let mut dr_dtwist = na::SMatrix::<_, 52, _>::zeros(); 
 
-        let mut dtransform_dtwist = na::Matrix2x3::new(
+        let mut dpixel_dtwist = na::Matrix2x3::new(
             0.0, 1.0, 0.0,
             0.0, 0.0, 1.0
         );
@@ -110,11 +134,11 @@ pub trait Patch<const SIZE: usize> {
             .zip(dr_dtwist.row_iter_mut())
             .zip(intensities.iter_mut())
         {
-            // ri(twist) = img(transform(twist)*pi) - img_target
-            // transform(twist) = exp(twist)
+            // ri(twist) = img(pixel_i(twist)) - img_target
+            // pixel_i(twist) = exp(twist)*pi
             
             // dri_dtwist(0) = dimg_dpixel(pi) * dtransform_dtwist
-            // dtransform_dtwist = [
+            // dpixel_dtwist = [
             //   [ -p2  1  0 ],
             //   [  p1  0  1 ]
             //  ]
@@ -124,16 +148,68 @@ pub trait Patch<const SIZE: usize> {
                 center[1]+shift[1]
             ];
 
-            dtransform_dtwist[(0,0)] = -pixel_coords[1];
-            dtransform_dtwist[(1,0)] =  pixel_coords[0];
+            dpixel_dtwist[(0,0)] = -pixel_coords[1];
+            dpixel_dtwist[(1,0)] =  pixel_coords[0];
 
             *intensity = d_interpolate_bicubic(&pixel_coords, img, &mut dimg_dpixel)
                 .unwrap_or(0.0);
 
             // dri_dtwist = dimg_dpixel * dtransform_dtwist;
-            dimg_dpixel.mul_to(&dtransform_dtwist, &mut dri_dtwist);
+            dimg_dpixel.mul_to(&dpixel_dtwist, &mut dri_dtwist);
 
             
+        }
+        
+        (intensities, dr_dtwist)
+    }
+
+
+    fn compute_intensities_and_jacobian_lssd(
+        img: &FloatGrayImage, center: &na::Point2<Float>
+    ) -> ([Float; 52], na::SMatrix<Float, 52, 3>)
+    {
+
+        let mut intensities = [0.0; 52];
+        let mut mean_intensity = 0.0;
+        let mut dintensities_dpixel = na::SMatrix::<Float, 52, 2>::zeros();
+        let mut mean_dintensity_dpixel = RowVec2::zeros();
+        
+        
+        let mut dimg_dpixel = RowVec2::zeros();
+        for ((shift, mut dintensity_dpixel), intensity) in Self::raw_indexes().iter()
+            .zip(dintensities_dpixel.row_iter_mut())
+            .zip(intensities.iter_mut())
+        {
+            let pixel_coords = [center[0]+shift[0], center[1]+shift[1]];
+            *intensity = d_interpolate_bicubic(&pixel_coords, img, &mut dimg_dpixel)
+                .unwrap_or(0.0);
+            dintensity_dpixel.set_row(0, &dimg_dpixel);
+            mean_intensity += *intensity;
+            mean_dintensity_dpixel += dimg_dpixel;
+        }
+
+        mean_intensity /= SIZE as Float;
+        mean_dintensity_dpixel /= SIZE as Float;
+
+        let mut dr_dtwist = na::SMatrix::<Float, 52, 3>::zeros(); 
+        let mut dpixel_dtwist = na::Matrix2x3::new(
+            0.0, 1.0, 0.0,
+            0.0, 0.0, 1.0
+        );
+
+        for (((shift, intensity), dintensity_dpixel), mut dri_dtwist) in Self::raw_indexes().iter()
+            .zip(intensities.iter_mut())
+            .zip(dintensities_dpixel.row_iter())
+            .zip(dr_dtwist.row_iter_mut())
+        {
+            let pixel_coords = [center[0]+shift[0], center[1]+shift[1]];
+            dpixel_dtwist[(0,0)] = -pixel_coords[1];
+            dpixel_dtwist[(1,0)] =  pixel_coords[0];
+
+
+            let dr_dpixel = (dintensity_dpixel*mean_intensity - (*intensity)*mean_dintensity_dpixel) / mean_intensity.powi(2);
+
+            dr_dpixel.mul_to(&dpixel_dtwist, &mut dri_dtwist);
         }
         
         (intensities, dr_dtwist)
@@ -210,7 +286,7 @@ impl Patch<52> for Patch52 {
         &self.center_coords
     }
 
-    fn intensities(&self) -> &[f32; 52] {
+    fn datas(&self) -> &[f32; 52] {
         &self.intensities
     }
 

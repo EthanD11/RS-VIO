@@ -27,9 +27,9 @@ pub mod types {
 
         #[test]
         fn test_vec2() {
-            let v = na::Vector2::<f32>::x_axis();
+            let _v = na::Vector2::<f32>::x_axis();
             let v = Vec2::x_axis();
-            let vslice = v.as_slice();
+            let _vslice = v.as_slice();
         }
     }
 }

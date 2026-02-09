@@ -103,7 +103,7 @@ mod interpolation_module {
     use std::ops::Not;
 
     use super::*;
-    use nalgebra::{self as na, Point2};
+    use nalgebra::Point2;
     // use image::{self};
 
     pub trait InterpolationPoint {
@@ -286,6 +286,7 @@ mod interpolation_module {
     mod test {
     
         use super::*;
+        use nalgebra as na;
     
         #[test]
         fn test_interpolate_bicubic() {

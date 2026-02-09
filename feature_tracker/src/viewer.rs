@@ -1,6 +1,5 @@
-use image::{DynamicImage, GenericImageView, ImageBuffer, Luma, Pixel, PixelWithColorType, Primitive};
+use image::{DynamicImage};
 use image::codecs::jpeg::JpegEncoder;
-use crate::types::*;
 use rerun::{self as rr};
 
 /// Viewer trait for basic visualization operations
@@ -88,7 +87,7 @@ impl FeatureTrackerViewer for rr::RecordingStream {
         ).unwrap();
     }
 
-    fn log_image_with_features_colored(&mut self, image: &[u8], width: u32, height: u32, features: &[(usize, [f32; 2])], entity_path: &str) {
+    fn log_image_with_features_colored(&mut self, _image: &[u8], _width: u32, _height: u32, _features: &[(usize, [f32; 2])], _entity_path: &str) {
         todo!()
     }
 

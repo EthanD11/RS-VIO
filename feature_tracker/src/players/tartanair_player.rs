@@ -1,7 +1,5 @@
 use std::path::{Path, PathBuf};
 use std::fs;
-use std::thread;
-use std::time;
 
 use anyhow::Result;
 use image::{self};

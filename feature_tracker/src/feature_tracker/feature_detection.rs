@@ -43,6 +43,8 @@ impl Score for ShiTomasiCorner {
     }
 }
 
+
+
 pub fn add_points(
     pyramid: &Pyramid,
     tracked_features: &Vec<Feature>,
@@ -76,6 +78,7 @@ pub fn add_points(
         .filter(|c| xrange.contains(&c.x) && yrange.contains(&c.y))
         .collect()
 }
+
 
 fn shi_tomasi_score(
     in_image: &FloatGrayImage,

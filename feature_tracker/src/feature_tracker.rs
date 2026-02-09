@@ -1,13 +1,17 @@
 use std::collections::HashMap;
+use std::ops::Not;
+use std::option;
 
 use log;
 use imageproc::definitions::Position;
+use rerun::TransformRelation;
 use serde::{Deserialize, Serialize};
-use image::{self, GrayImage, ImageBuffer, Luma, Pixel};
+use image::{self, GenericImageView, GrayImage, ImageBuffer, Luma, Pixel};
 use nalgebra as na;
 
 
 use crate::ext::Frame;
+use crate::feature_tracker::feature_detection::ShiTomasiCorner;
 use crate::image_operations::*;
 use crate::patch::{Patch, Patch52};
 use crate::viewer::FeatureTrackerViewer;
@@ -43,7 +47,7 @@ pub struct Feature {
     pub feature_id: usize,
 
     /// Pixel coordinate in the left image (u, v).
-    pub pixel_coord: [f32; 2],
+    pub pixel_coord: na::Point2<Float>,
 }
 
 
@@ -73,7 +77,7 @@ impl<'a> FeatureTracker<'a> {
         id
     }
 
-    pub fn process_frame(&mut self, in_image: &FloatGrayImage, mut frame: Frame) 
+    pub fn process_frame(&mut self, in_image: &FloatGrayImage, mut frame: Frame)
     {   
 
         if let Some(v) = self.viewer {
@@ -90,7 +94,8 @@ impl<'a> FeatureTracker<'a> {
             self.config.preprocessing_blur,
             self.config.preprocessing_blur_sigma
         );
-        if let Some(v) = self.viewer {
+
+        if let Some(v) = self.viewer && log::max_level() >= log::LevelFilter::Debug {
             let dynimage_pyramid = pyramid.iter()
                 .map(|level_img| level_img.clone().into())
                 .collect::<Vec<_>>();
@@ -121,20 +126,29 @@ impl<'a> FeatureTracker<'a> {
                 self.config.optical_flow_lm_lambda,
                 self.viewer
             );
-            println!("Transforms len: {}", transform_maps.len());
-            if let Some(v) = self.viewer {
-                let tracked_points = previous_frame.features.iter().filter_map(|f| {
-                    transform_maps.get(&f.feature_id).and_then(
-                        |transform| Some((transform* na::Point2::new(f.pixel_coord[0], f.pixel_coord[1]), f.feature_id))
-                    )
-                }).map(|(point, id)| (<Vec2 as AsRef<[Float; 2]>>::as_ref(&point.coords).clone(), id))
-                .collect::<Vec<_>>();
+            
+            let tracked_features: Vec<Feature> = previous_frame.features.iter()
+                .filter_map(|feature| {
+                    transform_maps
+                        .get(&feature.feature_id)
+                        .and_then(|transform| Some(
+                            Feature {
+                                feature_id: feature.feature_id,
+                                pixel_coord: transform * feature.pixel_coord
+                            }
+                        ))
+                })
+                .collect();
 
-                let coords = tracked_points.iter().map(|(coord, _)| *coord).collect::<Vec<_>>();
-                let ids = tracked_points.iter().map(|(_, id)| format!("{id}")).collect::<Vec<_>>();
-                v.log_features(&coords, "image/old_features", Some(&ids), Some(rerun::Color::from_rgb(0, 255, 0)));
-                v.log_image_raw(&previous_pyramid[0].clone().into(), "image/old_image");
-            }
+            frame.features.extend(tracked_features);
+
+            // if let Some(v) = self.viewer {
+            //     let coords: Vec<[f32; 2]> = tracked_points.iter().map(|feature| feature.pixel_coord.into()).collect();
+            //     let ids: Vec<String> = tracked_points.iter().map(|feature| format!("{}", feature.feature_id)).collect();
+            //     v.log_features(&coords, "image/old_features", Some(&ids), Some(rerun::Color::from_rgb(0, 255, 0)));
+            //     v.log_image_raw(&previous_pyramid[0].clone().into(), "image/old_image");
+            // }
+
         };
 
         
@@ -143,6 +157,7 @@ impl<'a> FeatureTracker<'a> {
 
         let new_corners = feature_detection::add_points(
             &pyramid, 
+            &frame.features,
             self.config.detection_threshold, 
             self.config.detection_min_dist,
             self.config.detection_blur,
@@ -154,20 +169,16 @@ impl<'a> FeatureTracker<'a> {
             .map(|corner| 
                 Feature { 
                     feature_id: self.next_id(), 
-                    pixel_coord: [corner.x() as f32, corner.y() as f32]
+                    pixel_coord: na::Point2::new(corner.x() as f32, corner.y() as f32)
                 });
 
         frame.features.extend(new_features);
 
         if let Some(v) = self.viewer {
-            let coords = frame.features.iter().map(|f| f.pixel_coord).collect::<Vec<_>>();
+            let coords = frame.features.iter().map(|f| f.pixel_coord.coords.into()).collect::<Vec<_>>();
             let labels = frame.features.iter().map(|f| format!("{}", f.feature_id)).collect::<Vec<_>>();
             v.log_features(&coords, "image/features", Some(&labels), None);
         }
-
-
-        
-
 
         self.previous_frame_pyramid = Some((frame, pyramid));
     }
@@ -189,7 +200,7 @@ fn track_points(
 ) {
 
     for feature in frame0.features.iter() {
-        let transform = track_point(
+        let tracking_result = track_point(
             pyramid0, 
             pyramid1, 
             feature, 
@@ -197,9 +208,17 @@ fn track_points(
             lm_lambda,
             viewer
         );
-        transform_maps0.insert(feature.feature_id, transform);
+        if let Ok(transform) = tracking_result {
+            transform_maps0.insert(feature.feature_id, transform);
+        }
     }
 }
+
+#[derive(Copy, Clone, Debug)]
+enum TrackPointError {
+    OutOfBound
+}
+
 
 fn track_point(
     pyramid0: &Pyramid,
@@ -208,14 +227,15 @@ fn track_point(
     max_iteration: usize,
     lm_lambda: Float,
     viewer: Option<&dyn FeatureTrackerViewer>
-) -> na::Isometry2<Float>
+) -> Result<na::Isometry2<Float>, TrackPointError>
 {
 
 
     let (w, h) = pyramid0.first().unwrap().dimensions();
     let (w, h) = (w as Float, h as Float);
 
-    let [fx, fy] = feature.pixel_coord;
+    let fx = feature.pixel_coord.x;
+    let fy = feature.pixel_coord.y;
 
     let mut transform = na::Isometry2::identity();
     for level in (0..pyramid0.len()).rev()
@@ -227,7 +247,7 @@ fn track_point(
 
         let scaling_x = w_lvl as Float / w;
         let scaling_y = h_lvl as Float / h;
-        let level_coords = na::Vector2::new(
+        let level_coords = na::Point2::new(
             scaling_x*(fx + 0.5) - 0.5, 
             scaling_y*(fy + 0.5) - 0.5
         );
@@ -242,7 +262,7 @@ fn track_point(
             level,
             feature.feature_id,
             viewer
-        );
+        )?;
 
         // Scale to the next pyramid level
         if level > 0 {
@@ -253,25 +273,26 @@ fn track_point(
 
     }
     
-    transform
+    Ok(transform)
 }
+
 
 
 fn track_point_at_level(
     img0: &FloatGrayImage,
     img1: &FloatGrayImage,
-    feature_coords: &na::Vector2<Float>,
+    feature_coords: &na::Point2<Float>,
     initial_guess: &na::Isometry2<Float>,
     max_iteration: usize,
     lm_lambda: Float,
     level: usize,
     feature_id: usize,
     viewer: Option<&dyn FeatureTrackerViewer>
-) -> na::Isometry2<Float>
+) -> Result<na::Isometry2<Float>, TrackPointError>
 {
     let mut transform = initial_guess.clone();
 
-    let patch = Patch52::new(img0, feature_coords.as_ref(), lm_lambda);
+    let patch = Patch52::new(img0, feature_coords.coords.as_ref(), lm_lambda);
     let jac = patch.jacobian();
     let inverse_hessian = patch.inverse_hessian();
 
@@ -281,23 +302,31 @@ fn track_point_at_level(
             &format!("pyramid/level{level}/features/{feature_id}/patch"), None, None);
     }
 
-    let mut iterates = Vec::new();
-    for i in 0..max_iteration {
+    let mut iterates = vec![(transform*feature_coords).into()];
+    for i in 0..max_iteration 
+    {
         log::debug!("Feature id: {feature_id}");
         log::debug!("iter: {i}");
 
-        if viewer.is_some() {
-            let shifted_coords = patch.shifted_center(&transform);
-            iterates.push(shifted_coords);
-        }
+        
+        
 
         let residuals = patch.residuals(img1, &transform);
         log::debug!("{}\n", residuals.norm());
+
         let b = jac.transpose() * residuals;
         let twist = inverse_hessian * b;
-        let mut d_transform = exp_se2(&(-twist));
-        d_transform.rotation = na::UnitComplex::identity();
-        transform *= d_transform;
+        transform *= exp_se2(&(-twist));
+
+        let iterate = transform * feature_coords;
+        if viewer.is_some() {
+            iterates.push(iterate.into());
+        }
+        if in_bounds(img0, iterate.x, iterate.y).not()
+        {
+            return Err(TrackPointError::OutOfBound)
+        }
+
         if twist.norm() < 1e-3 {
             break
         }
@@ -313,7 +342,7 @@ fn track_point_at_level(
         );
     }
 
-    transform
+    Ok(transform)
 }
 
 

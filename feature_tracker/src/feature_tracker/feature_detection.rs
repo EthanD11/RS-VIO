@@ -45,6 +45,7 @@ impl Score for ShiTomasiCorner {
 
 pub fn add_points(
     pyramid: &Pyramid,
+    tracked_features: &Vec<Feature>,
     threshold: Float, 
     min_dist_between_points: u32,
     detection_blur: Float,
@@ -54,12 +55,19 @@ pub fn add_points(
     let image_fine = pyramid.first().unwrap();
     
     let score_map = shi_tomasi_score(&image_fine, detection_blur, viewer);
-    let corners = suppress_non_maximum(&score_map, 1, threshold, viewer);
+    let mut corners = suppress_non_maximum(&score_map, 1, threshold, viewer);
+
+    if tracked_features.len() > 0 {
+        let maximum_score = corners.iter().fold(f32::NEG_INFINITY, |max_score, corner| f32::max(max_score, corner.score));
+        corners.extend(
+            tracked_features.iter().map(|f| ShiTomasiCorner::from_feature(f, maximum_score + 1.0))
+        );
+    }
+
     let corners = suppress::local_maxima(&corners, min_dist_between_points);
     
     let (w, h) = image_fine.dimensions();
 
-    let buffer = u32::max(min_dist_between_points, 50);
     let xrange = min_dist_between_points..(w-min_dist_between_points);
     let yrange = min_dist_between_points..(h-min_dist_between_points);
     corners

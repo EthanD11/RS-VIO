@@ -1,6 +1,13 @@
 use crate::types::*;
 
 
+#[inline]
+pub fn in_bounds(img: &FloatGrayImage, x: f32, y: f32) -> bool {
+    x.is_positive() && y.is_positive() && img.in_bounds(x.round() as u32, y.round() as u32)
+}
+
+
+use image::GenericImageView;
 pub use pyramid_module::*; // Re-export to higher module
 mod pyramid_module {
     use super::*;
@@ -90,7 +97,8 @@ mod pyramid_module {
 
 
 
-pub use interpolation_module::*; // Re-export to higher module
+pub use interpolation_module::*;
+use rand_distr::num_traits::Signed; // Re-export to higher module
 mod interpolation_module {
     use std::ops::Not;
 

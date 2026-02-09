@@ -34,12 +34,14 @@ impl TartanAirPlayer {
             .collect();
         left_images.sort_by_key(|dir_entry| dir_entry.path());
         
-        for file in left_images.iter().skip(300).take(10) {
+
+        for file in left_images.iter().skip(0).take(800) {
 
             let frame_id = file.path()
                 .file_stem().unwrap()
                 .to_str().unwrap()
-                .split("_").nth(0).unwrap()
+                .split("_")
+                .nth(0).unwrap()
                 .parse().unwrap();
 
             rec.set_time_sequence("frame_id", frame_id);
@@ -48,8 +50,6 @@ impl TartanAirPlayer {
             let frame = Frame::new(frame_id);
 
             tracker.process_frame(&frame_image.to_luma32f(), frame);
-
-
 
             rec.log_image_raw(&frame_image, "image/colored");
         }

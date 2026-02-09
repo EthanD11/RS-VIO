@@ -34,8 +34,7 @@ pub trait DensePatch<const SIZE: usize, const NROWS: usize>: Patch<SIZE> {
     fn rows() ->  [[[i64; 2]; 2]; NROWS];
 }
 
-pub struct Patch52<'a> {
-    img: &'a FloatGrayImage,
+pub struct Patch52 {
     center_coords: [f32; 2],
     intensities: [f32; 52],
     dr_dtwist: na::SMatrix<Float, 52, 3>,
@@ -43,8 +42,8 @@ pub struct Patch52<'a> {
 }
 
 use std::ops::Not;
-impl<'a> Patch52<'a> {
-    pub fn new(img: &'a FloatGrayImage, center: &[f32; 2], lm_lambda: Float) -> Patch52<'a>
+impl Patch52 {
+    pub fn new(img: &FloatGrayImage, center: &[f32; 2], lm_lambda: Float) -> Patch52
     {
         let (intensities, dr_dtwist) = Self::compute_intensities_and_jacobian(img, *center);
 
@@ -57,7 +56,7 @@ impl<'a> Patch52<'a> {
         };
         let inverse_hessian = hessian;
 
-        Self { img, center_coords: *center, intensities, dr_dtwist, inverse_hessian}
+        Self { center_coords: *center, intensities, dr_dtwist, inverse_hessian}
     }
 
     fn compute_intensities_and_jacobian(
@@ -112,7 +111,7 @@ impl<'a> Patch52<'a> {
 
 }
 
-impl<'a> Patch<52> for Patch52<'a> {
+impl Patch<52> for Patch52 {
     const PATTERN_RAW: [[f32; 2]; 52] = [
         [-3.0, 7.0],  [-1.0, 7.0],  [1.0, 7.0],   [3.0, 7.0],
 
@@ -137,7 +136,7 @@ impl<'a> Patch<52> for Patch52<'a> {
 
     #[inline]
     fn raw_indexes() -> [[f32; 2]; 52] {
-        Self::PATTERN_RAW.map(|coords| coords.map(|c| c / 2.0))
+        Self::PATTERN_RAW //.map(|coords| coords.map(|c| c / 2.0))
     }
 
     fn shifted_indexes(&self, transform: &na::Isometry2<Float>) -> [[f32; 2]; 52] {
@@ -159,11 +158,11 @@ impl<'a> Patch<52> for Patch52<'a> {
 
     fn shifted_center(&self, transform: &nalgebra::Isometry2<Float>) -> [f32; 2] {        
         let center = self.center_coords;
-        let pixel_coords = Point2::new(
+        let center_point = Point2::new(
             center[0], 
             center[1]
         );
-        let pixel_coords = transform * pixel_coords;
+        let pixel_coords = transform * center_point;
         let mut index = [0.0f32; 2];
         index[0] = pixel_coords[0];
         index[1] = pixel_coords[1];
@@ -203,7 +202,7 @@ impl<'a> Patch<52> for Patch52<'a> {
 
 
 
-impl<'a> DensePatch<52, 8> for Patch52<'a> {
+impl DensePatch<52, 8> for Patch52 {
     const PATTERN_BY_ROWS: [[[i64; 2]; 2]; 8] = [
         [[-3, 7], [3, 7]],
 
